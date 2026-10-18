@@ -1,0 +1,457 @@
+From 9da7d94d61c724ea44a257131af31f0c45507d6c Mon Sep 17 00:00:00 2001
+From: CoA Reborn Classes contributors <noreply@example.invalid>
+Date: Sat, 17 Oct 2026 12:51:54 +0900
+Subject: [PATCH] ShadowCore: Kill Command twin + Death Knight v2 twin fixes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/server/game/DungeonFinding/LFGMgr.cpp     |   4 +-
+ src/server/game/Entities/Unit/Unit.cpp        |   8 +-
+ .../game/Spells/Auras/SpellAuraEffects.cpp    |   4 +-
+ src/server/game/Spells/Auras/SpellAuras.cpp   |   9 +-
+ src/server/game/Spells/SpellEffects.cpp       |   4 +-
+ src/server/game/Spells/SpellInfo.cpp          |   5 +-
+ src/server/game/Spells/SpellMgr.cpp           |   2 +-
+ src/server/scripts/Spells/spell_dk.cpp        | 144 +++++++++++-------
+ 8 files changed, 107 insertions(+), 73 deletions(-)
+
+diff --git a/src/server/game/DungeonFinding/LFGMgr.cpp b/src/server/game/DungeonFinding/LFGMgr.cpp
+index 93c664d85..6e39db616 100644
+--- a/src/server/game/DungeonFinding/LFGMgr.cpp
++++ b/src/server/game/DungeonFinding/LFGMgr.cpp
+@@ -530,7 +530,9 @@ namespace lfg
+                 lockData = LFG_LOCKSTATUS_TOO_HIGH_LEVEL;
+             else if (dungeon->seasonal && !IsSeasonActive(dungeon->id))
+                 lockData = LFG_LOCKSTATUS_NOT_IN_SEASON;
+-            else if (player->IsClass(CLASS_DEATH_KNIGHT) && !player->IsGameMaster() &&!(player->IsQuestRewarded(13188) || player->IsQuestRewarded(13189)))
++            // ShadowCore DK v2: a exigencia da campanha so vale quando o DK nasce no nivel heroico (55+); com DK no nivel 1 nao ha quest
++            else if (player->IsClass(CLASS_DEATH_KNIGHT) && !player->IsGameMaster() && sWorld->getIntConfig(CONFIG_START_HEROIC_PLAYER_LEVEL) >= 55 &&
++                !(player->IsQuestRewarded(13188) || player->IsQuestRewarded(13189)))
+                 lockData = LFG_LOCKSTATUS_QUEST_NOT_COMPLETED;
+             else if (ar)
+             {
+diff --git a/src/server/game/Entities/Unit/Unit.cpp b/src/server/game/Entities/Unit/Unit.cpp
+index eb8ac61f9..415a48e1b 100644
+--- a/src/server/game/Entities/Unit/Unit.cpp
++++ b/src/server/game/Entities/Unit/Unit.cpp
+@@ -9305,8 +9305,8 @@ float Unit::SpellPctDamageModsDone(Unit* victim, SpellInfo const* spellProto, Da
+                     // Tundra Stalker
+                     else
+                     {
+-                        // Frost Fever (target debuff)
+-                        if (victim->HasAura(55095))
++                        // Frost Fever (target debuff) - ShadowCore DK v2: tambem a gemea
++                        if (victim->HasAuraOrTwin(55095))
+                             AddPct(DoneTotalMod, (*i)->GetAmount());
+                         break;
+                     }
+@@ -11274,8 +11274,8 @@ uint32 Unit::MeleeDamageBonusDone(Unit* victim, uint32 pdamage, WeaponAttackType
+                     // Tundra Stalker
+                     else
+                     {
+-                        // Frost Fever (target debuff)
+-                        if (victim->HasAura(55095))
++                        // Frost Fever (target debuff) - ShadowCore DK v2: tambem a gemea
++                        if (victim->HasAuraOrTwin(55095))
+                             AddPct(DoneTotalMod, (*i)->GetAmount());
+                     }
+                     break;
+diff --git a/src/server/game/Spells/Auras/SpellAuraEffects.cpp b/src/server/game/Spells/Auras/SpellAuraEffects.cpp
+index e3bd2a642..3e37765f9 100644
+--- a/src/server/game/Spells/Auras/SpellAuraEffects.cpp
++++ b/src/server/game/Spells/Auras/SpellAuraEffects.cpp
+@@ -5407,7 +5407,7 @@ void AuraEffect::HandleAuraDummy(AuraApplication const* aurApp, uint8 mode, bool
+         // AT APPLY
+         if (apply)
+         {
+-            switch (GetId())
++            switch (sSpellMgr->GetSpellTwinSource(GetId())) // ShadowCore: gemea Reborn (+1100000) = magia original (Kill Command, Tame Beast, Tidal Force)
+             {
+                 case 1515:                                      // Tame beast
+                     // FIX_ME: this is 2.0.12 threat effect replaced in 2.1.x by dummy aura, must be checked for correctness
+@@ -6196,7 +6196,7 @@ void AuraEffect::HandlePeriodicDummyAuraTick(Unit* target, Unit* caster) const
+                 break;
+             }
+         case SPELLFAMILY_DEATHKNIGHT:
+-            switch (GetId())
++            switch (sSpellMgr->GetSpellTwinSource(GetId())) // ShadowCore DK v2: gemea Reborn = original
+             {
+                 case 49016: // Hysteria
+                     uint32 damage = uint32(target->CountPctFromMaxHealth(1));
+diff --git a/src/server/game/Spells/Auras/SpellAuras.cpp b/src/server/game/Spells/Auras/SpellAuras.cpp
+index 833bfa50f..62a1cc588 100644
+--- a/src/server/game/Spells/Auras/SpellAuras.cpp
++++ b/src/server/game/Spells/Auras/SpellAuras.cpp
+@@ -1500,7 +1500,7 @@ void Aura::HandleAuraSpecificMods(AuraApplication const* aurApp, Unit* caster, b
+                     if (aurEff)
+                     {
+                         uint32 spellId = 0;
+-                        switch (aurEff->GetId())
++                        switch (sSpellMgr->GetSpellTwinSource(aurEff->GetId())) // ShadowCore DK v2: talento gemea
+                         {
+                             // Ebon Plague
+                             case 51161:
+@@ -1525,11 +1525,12 @@ void Aura::HandleAuraSpecificMods(AuraApplication const* aurApp, Unit* caster, b
+                             default:
+                                 LOG_ERROR("spells.aura", "Aura::HandleAuraSpecificMods: Unknown rank of Crypt Fever/Ebon Plague ({}) found", aurEff->GetId());
+                         }
+-                        caster->CastSpell(target, spellId, true, 0, GetEffect(0));
++                        if (spellId) // ShadowCore DK v2: debuff gemea quando o talento e gemea
++                            caster->CastSpell(target, sSpellMgr->GetSpellTwinFor(spellId, aurEff->GetId()), true, 0, GetEffect(0));
+                     }
+                 }
+                 // Unholy blight
+-                if (GetId() == 50536)
++                if (sSpellMgr->GetSpellTwinSource(GetId()) == 50536)
+                 {
+                     if (caster->IsFriendlyTo(target))
+                         SetDuration(0);
+@@ -1865,7 +1866,7 @@ void Aura::HandleAuraSpecificMods(AuraApplication const* aurApp, Unit* caster, b
+             }
+             break;
+         case SPELLFAMILY_HUNTER:
+-            switch (GetId())
++            switch (sSpellMgr->GetSpellTwinSource(GetId())) // ShadowCore: gemea Reborn = original (Bestial Wrath, Kill Command)
+             {
+                 case 19574: // Bestial Wrath
+                     // The Beast Within cast on owner if talent present
+diff --git a/src/server/game/Spells/SpellEffects.cpp b/src/server/game/Spells/SpellEffects.cpp
+index 9fed41700..4bff0a4f4 100644
+--- a/src/server/game/Spells/SpellEffects.cpp
++++ b/src/server/game/Spells/SpellEffects.cpp
+@@ -6244,8 +6244,8 @@ void Spell::EffectActivateRune(SpellEffIndex effIndex)
+         }
+     }
+ 
+-    // Empower rune weapon
+-    if (m_spellInfo->Id == 47568)
++    // Empower rune weapon (ShadowCore DK v2: e a gemea Reborn)
++    if (sSpellMgr->GetSpellTwinSource(m_spellInfo->Id) == 47568)
+     {
+         // Need to do this just once
+         if (effIndex != 0)
+diff --git a/src/server/game/Spells/SpellInfo.cpp b/src/server/game/Spells/SpellInfo.cpp
+index 506108767..24db40da8 100644
+--- a/src/server/game/Spells/SpellInfo.cpp
++++ b/src/server/game/Spells/SpellInfo.cpp
+@@ -2437,9 +2437,12 @@ SpellSpecificType SpellInfo::LoadSpellSpecific() const
+                 break;
+             }
+         case SPELLFAMILY_DEATHKNIGHT:
+-            if (Id == 48266 || Id == 48263 || Id == 48265)
++        {
++            uint32 const presence = sSpellMgr->GetSpellTwinSource(Id); // ShadowCore DK v2: gemea Reborn = presenca original
++            if (presence == 48266 || presence == 48263 || presence == 48265)
+                 return SPELL_SPECIFIC_PRESENCE;
+             break;
++        }
+     }
+ 
+     for (uint8 i = 0; i < MAX_SPELL_EFFECTS; ++i)
+diff --git a/src/server/game/Spells/SpellMgr.cpp b/src/server/game/Spells/SpellMgr.cpp
+index 205ef92e7..cd84269e1 100644
+--- a/src/server/game/Spells/SpellMgr.cpp
++++ b/src/server/game/Spells/SpellMgr.cpp
+@@ -3724,7 +3724,7 @@ void SpellMgr::LoadSpellInfoCustomAttributes()
+                             if (spellInfo->SpellFamilyName == SPELLFAMILY_MAGE && (spellInfo->SpellFamilyFlags[0] & 0x20)) // Frostbolt
+                                 continue;
+ 
+-                            if (spellInfo->Id == 55095) // Frost Fever
++                            if (GetSpellTwinSource(spellInfo->Id) == 55095) // Frost Fever (ShadowCore DK v2: e a gemea)
+                                 continue;
+ 
+                             if (spellInfo->SpellFamilyName == SPELLFAMILY_WARLOCK &&
+diff --git a/src/server/scripts/Spells/spell_dk.cpp b/src/server/scripts/Spells/spell_dk.cpp
+index 6a6c78dc4..cf3813bbb 100644
+--- a/src/server/scripts/Spells/spell_dk.cpp
++++ b/src/server/scripts/Spells/spell_dk.cpp
+@@ -127,6 +127,27 @@ enum Misc
+     NPC_RISEN_ALLY                              = 30230
+ };
+ 
++// ShadowCore DK v2: o Death Knight classico usa as gemeas Reborn (+1100000). As pecas do Death Coil
++// nao sao "gemeas" no SpellMgr (o stock virou "Grave Coil"), entao a ligacao e feita aqui pelo deslocamento.
++// Para quem lanca o stock nada muda.
++namespace DkReborn
++{
++    constexpr uint32 OFFSET = 1100000;
++
++    uint32 PartFor(uint32 stockPart, uint32 castSpellId)
++    {
++        uint32 const twin = sSpellMgr->GetSpellTwinFor(stockPart, castSpellId);
++        if (twin != stockPart)
++            return twin;
++        return castSpellId > OFFSET && sSpellMgr->GetSpellInfo(stockPart + OFFSET) ? stockPart + OFFSET : stockPart;
++    }
++
++    bool Is(uint32 spellId, uint32 stockId)
++    {
++        return spellId == stockId || sSpellMgr->GetSpellTwinSource(spellId) == stockId || spellId == stockId + OFFSET;
++    }
++}
++
+ // 50526 - Wandering Plague
+ class spell_dk_wandering_plague : public SpellScript
+ {
+@@ -682,7 +703,7 @@ class spell_dk_dancing_rune_weapon : public AuraScript
+             return true;
+ 
+         // Death Coil exception, Check if spell is from spellbook
+-        if (spellInfo->Id != SPELL_DK_DEATH_COIL_DAMAGE && !eventInfo.GetActor()->ToPlayer()->HasActiveSpell(spellInfo->Id))
++        if (!DkReborn::Is(spellInfo->Id, SPELL_DK_DEATH_COIL_DAMAGE) && !eventInfo.GetActor()->ToPlayer()->HasActiveSpell(spellInfo->Id))
+             return false;
+ 
+         // Can't cast raise dead/ally, death grip, dark command, death pact, death and decay, anti-magic shell
+@@ -1409,13 +1430,13 @@ class spell_dk_death_coil : public SpellScript
+             if (caster->IsFriendlyTo(target))
+             {
+                 int32 bp = int32(damage * 1.5f);
+-                caster->CastCustomSpell(target, SPELL_DK_DEATH_COIL_HEAL, &bp, nullptr, nullptr, true);
++                caster->CastCustomSpell(target, DkReborn::PartFor(SPELL_DK_DEATH_COIL_HEAL, GetSpellInfo()->Id), &bp, nullptr, nullptr, true);
+             }
+             else
+             {
+                 if (AuraEffect const* auraEffect = caster->GetAuraEffect(SPELL_DK_ITEM_SIGIL_VENGEFUL_HEART, EFFECT_1))
+                     damage += auraEffect->GetBaseAmount();
+-                caster->CastCustomSpell(target, SPELL_DK_DEATH_COIL_DAMAGE, &damage, nullptr, nullptr, true);
++                caster->CastCustomSpell(target, DkReborn::PartFor(SPELL_DK_DEATH_COIL_DAMAGE, GetSpellInfo()->Id), &damage, nullptr, nullptr, true);
+             }
+         }
+     }
+@@ -1811,15 +1832,15 @@ class spell_dk_improved_blood_presence : public AuraScript
+     void HandleEffectApply(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+-        if (target->HasAnyAuras(SPELL_DK_FROST_PRESENCE, SPELL_DK_UNHOLY_PRESENCE) && !target->HasAura(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED))
+-            target->CastCustomSpell(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED, ImprovedBloodPresenceAmountMod(), aurEff->GetAmount(), target, true, nullptr, aurEff);
++        if ((target->HasAuraOrTwin(SPELL_DK_FROST_PRESENCE) || target->HasAuraOrTwin(SPELL_DK_UNHOLY_PRESENCE)) && !target->HasAuraOrTwin(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED))
++            target->CastCustomSpell(sSpellMgr->GetSpellTwinFor(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED, GetId()), ImprovedBloodPresenceAmountMod(), aurEff->GetAmount(), target, true, nullptr, aurEff);
+     }
+ 
+     void HandleEffectRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+-        if (!target->HasAura(SPELL_DK_BLOOD_PRESENCE))
+-            target->RemoveAura(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED);
++        if (!target->HasAuraOrTwin(SPELL_DK_BLOOD_PRESENCE))
++            target->RemoveAurasDueToSpellOrTwin(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED);
+     }
+ 
+     void Register() override
+@@ -1848,15 +1869,15 @@ class spell_dk_improved_frost_presence : public AuraScript
+     void HandleEffectApply(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+-        if (target->HasAnyAuras(SPELL_DK_BLOOD_PRESENCE, SPELL_DK_UNHOLY_PRESENCE) && !target->HasAura(SPELL_DK_FROST_PRESENCE_TRIGGERED))
+-            target->CastCustomSpell(SPELL_DK_FROST_PRESENCE_TRIGGERED, SPELLVALUE_BASE_POINT0, aurEff->GetAmount(), target, true, nullptr, aurEff);
++        if ((target->HasAuraOrTwin(SPELL_DK_BLOOD_PRESENCE) || target->HasAuraOrTwin(SPELL_DK_UNHOLY_PRESENCE)) && !target->HasAuraOrTwin(SPELL_DK_FROST_PRESENCE_TRIGGERED))
++            target->CastCustomSpell(sSpellMgr->GetSpellTwinFor(SPELL_DK_FROST_PRESENCE_TRIGGERED, GetId()), SPELLVALUE_BASE_POINT0, aurEff->GetAmount(), target, true, nullptr, aurEff);
+     }
+ 
+     void HandleEffectRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+-        if (!target->HasAura(SPELL_DK_FROST_PRESENCE))
+-            target->RemoveAura(SPELL_DK_FROST_PRESENCE_TRIGGERED);
++        if (!target->HasAuraOrTwin(SPELL_DK_FROST_PRESENCE))
++            target->RemoveAurasDueToSpellOrTwin(SPELL_DK_FROST_PRESENCE_TRIGGERED);
+     }
+ 
+     void Register() override
+@@ -1886,25 +1907,25 @@ class spell_dk_improved_unholy_presence : public AuraScript
+     void HandleEffectApply(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+-        if (target->HasAura(SPELL_DK_UNHOLY_PRESENCE) && !target->HasAura(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED))
++        if (target->HasAuraOrTwin(SPELL_DK_UNHOLY_PRESENCE) && !target->HasAuraOrTwin(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED))
+         {
+             // Not listed as any effect, only base points set in dbc
+             int32 basePoints = GetSpellInfo()->Effects[EFFECT_1].CalcValue();
+-            target->CastCustomSpell(target, SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED, &basePoints, &basePoints, &basePoints, true, nullptr, aurEff);
++            target->CastCustomSpell(target, sSpellMgr->GetSpellTwinFor(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED, GetId()), &basePoints, &basePoints, &basePoints, true, nullptr, aurEff);
+         }
+ 
+-        if (target->HasAnyAuras(SPELL_DK_BLOOD_PRESENCE, SPELL_DK_FROST_PRESENCE) && !target->HasAura(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED))
+-            target->CastCustomSpell(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED, SPELLVALUE_BASE_POINT0, aurEff->GetAmount(), target, true, nullptr, aurEff);
++        if ((target->HasAuraOrTwin(SPELL_DK_BLOOD_PRESENCE) || target->HasAuraOrTwin(SPELL_DK_FROST_PRESENCE)) && !target->HasAuraOrTwin(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED))
++            target->CastCustomSpell(sSpellMgr->GetSpellTwinFor(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED, GetId()), SPELLVALUE_BASE_POINT0, aurEff->GetAmount(), target, true, nullptr, aurEff);
+     }
+ 
+     void HandleEffectRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+ 
+-        target->RemoveAura(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED);
++        target->RemoveAurasDueToSpellOrTwin(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED);
+ 
+-        if (!target->HasAura(SPELL_DK_UNHOLY_PRESENCE))
+-            target->RemoveAura(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED);
++        if (!target->HasAuraOrTwin(SPELL_DK_UNHOLY_PRESENCE))
++            target->RemoveAurasDueToSpellOrTwin(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED);
+     }
+ 
+     void Register() override
+@@ -1938,35 +1959,36 @@ class spell_dk_pestilence : public SpellScript
+         if (!target)
+             return;
+ 
++        // ShadowCore DK v2: as doencas podem ser as gemeas (1155078/1155095); espalha a mesma que esta no alvo
+         // Spread on others
+         if (target != hitUnit)
+         {
+             // Blood Plague
+-            if (target->GetAura(SPELL_DK_BLOOD_PLAGUE, caster->GetGUID()))
+-                caster->CastSpell(hitUnit, SPELL_DK_BLOOD_PLAGUE, true);
++            if (Aura const* disease = target->GetAuraOfRankedSpellOrTwin(SPELL_DK_BLOOD_PLAGUE, caster->GetGUID()))
++                caster->CastSpell(hitUnit, disease->GetId(), true);
+ 
+             // Frost Fever
+-            if (target->GetAura(SPELL_DK_FROST_FEVER, caster->GetGUID()))
+-                caster->CastSpell(hitUnit, SPELL_DK_FROST_FEVER, true);
++            if (Aura const* disease = target->GetAuraOfRankedSpellOrTwin(SPELL_DK_FROST_FEVER, caster->GetGUID()))
++                caster->CastSpell(hitUnit, disease->GetId(), true);
+         }
+         // Refresh on target
+-        else if (caster->GetAura(SPELL_DK_GLYPH_OF_DISEASE))
++        else if (caster->HasAuraOrTwin(SPELL_DK_GLYPH_OF_DISEASE))
+         {
+             // Blood Plague
+-            if (Aura* disease = target->GetAura(SPELL_DK_BLOOD_PLAGUE, caster->GetGUID()))
++            if (Aura* disease = target->GetAuraOfRankedSpellOrTwin(SPELL_DK_BLOOD_PLAGUE, caster->GetGUID()))
+                 disease->RefreshDuration();
+ 
+             // Frost Fever
+-            if (Aura* disease = target->GetAura(SPELL_DK_FROST_FEVER, caster->GetGUID()))
++            if (Aura* disease = target->GetAuraOfRankedSpellOrTwin(SPELL_DK_FROST_FEVER, caster->GetGUID()))
+             {
+                 disease->RefreshDuration();
+-                if (Aura const* talons = caster->GetAuraOfRankedSpell(SPELL_DK_ICY_TALONS_TALENT_R1))
++                if (Aura const* talons = caster->GetAuraOfRankedSpellOrTwin(SPELL_DK_ICY_TALONS_TALENT_R1))
+                     caster->CastSpell(caster, talons->GetSpellInfo()->Effects[EFFECT_0].TriggerSpell, true);
+             }
+ 
+-            if (Aura* disease = target->GetAuraOfRankedSpell(SPELL_DK_EBON_PLAGUE_R1, caster->GetGUID()))
++            if (Aura* disease = target->GetAuraOfRankedSpellOrTwin(SPELL_DK_EBON_PLAGUE_R1, caster->GetGUID()))
+                 disease->RefreshDuration();
+-            else if (Aura* disease = target->GetAuraOfRankedSpell(SPELL_DK_CRYPT_FEVER_R1, caster->GetGUID()))
++            else if (Aura* disease = target->GetAuraOfRankedSpellOrTwin(SPELL_DK_CRYPT_FEVER_R1, caster->GetGUID()))
+                 disease->RefreshDuration();
+         }
+     }
+@@ -2006,52 +2028,54 @@ class spell_dk_presence : public AuraScript
+     {
+         Unit* target = GetTarget();
+ 
+-        if (GetId() == SPELL_DK_BLOOD_PRESENCE)
+-            target->CastSpell(target, SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED, true);
+-        else if (AuraEffect const* impAurEff = target->GetAuraEffectOfRankedSpell(SPELL_DK_IMPROVED_BLOOD_PRESENCE_R1, EFFECT_0))
+-            if (!target->HasAura(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED))
+-                target->CastCustomSpell(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED, ImprovedBloodPresenceAmountMod(), impAurEff->GetAmount(), target, true, nullptr, aurEff);
++        uint32 const presence = sSpellMgr->GetSpellTwinSource(GetId()); // ShadowCore DK v2: gemea = presenca original
++        if (presence == SPELL_DK_BLOOD_PRESENCE)
++            target->CastSpell(target, sSpellMgr->GetSpellTwinFor(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED, GetId()), true);
++        else if (AuraEffect const* impAurEff = target->GetAuraEffectOfRankedSpellOrTwin(SPELL_DK_IMPROVED_BLOOD_PRESENCE_R1, EFFECT_0))
++            if (!target->HasAuraOrTwin(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED))
++                target->CastCustomSpell(sSpellMgr->GetSpellTwinFor(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED, impAurEff->GetId()), ImprovedBloodPresenceAmountMod(), impAurEff->GetAmount(), target, true, nullptr, aurEff);
+     }
+ 
+     void HandleImprovedFrostPresence(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+ 
+-        if (GetId() == SPELL_DK_FROST_PRESENCE)
+-            target->CastSpell(target, SPELL_DK_FROST_PRESENCE_BONUS_EFFECTS, true);
+-        else if (AuraEffect const* impAurEff = target->GetAuraEffectOfRankedSpell(SPELL_DK_IMPROVED_FROST_PRESENCE_R1, EFFECT_0))
+-            if (!target->HasAura(SPELL_DK_FROST_PRESENCE_TRIGGERED))
+-                target->CastCustomSpell(SPELL_DK_FROST_PRESENCE_TRIGGERED, SPELLVALUE_BASE_POINT0, impAurEff->GetAmount(), target, true, nullptr, aurEff);
++        if (sSpellMgr->GetSpellTwinSource(GetId()) == SPELL_DK_FROST_PRESENCE)
++            target->CastSpell(target, sSpellMgr->GetSpellTwinFor(SPELL_DK_FROST_PRESENCE_BONUS_EFFECTS, GetId()), true);
++        else if (AuraEffect const* impAurEff = target->GetAuraEffectOfRankedSpellOrTwin(SPELL_DK_IMPROVED_FROST_PRESENCE_R1, EFFECT_0))
++            if (!target->HasAuraOrTwin(SPELL_DK_FROST_PRESENCE_TRIGGERED))
++                target->CastCustomSpell(sSpellMgr->GetSpellTwinFor(SPELL_DK_FROST_PRESENCE_TRIGGERED, impAurEff->GetId()), SPELLVALUE_BASE_POINT0, impAurEff->GetAmount(), target, true, nullptr, aurEff);
+     }
+ 
+     void HandleImprovedUnholyPresence(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+ 
+-        if (GetId() == SPELL_DK_UNHOLY_PRESENCE)
+-            target->CastSpell(target, SPELL_DK_UNHOLY_PRESENCE_TRIGGERED, true);
++        bool const unholy = sSpellMgr->GetSpellTwinSource(GetId()) == SPELL_DK_UNHOLY_PRESENCE;
++        if (unholy)
++            target->CastSpell(target, sSpellMgr->GetSpellTwinFor(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED, GetId()), true);
+ 
+-        if (AuraEffect const* impAurEff = target->GetAuraEffectOfRankedSpell(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_R1, EFFECT_0))
++        if (AuraEffect const* impAurEff = target->GetAuraEffectOfRankedSpellOrTwin(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_R1, EFFECT_0))
+         {
+-            if (GetId() == SPELL_DK_UNHOLY_PRESENCE)
++            if (unholy)
+             {
+                 // Not listed as any effect, only base points set
+                 int32 bp = impAurEff->GetSpellInfo()->Effects[EFFECT_1].CalcValue();
+-                target->CastCustomSpell(target, SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED, &bp, &bp, &bp, true, nullptr, aurEff);
++                target->CastCustomSpell(target, sSpellMgr->GetSpellTwinFor(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED, impAurEff->GetId()), &bp, &bp, &bp, true, nullptr, aurEff);
+             }
+-            else if (!target->HasAura(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED))
+-                target->CastCustomSpell(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED, SPELLVALUE_BASE_POINT0, impAurEff->GetAmount(), target, true, nullptr, aurEff);
++            else if (!target->HasAuraOrTwin(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED))
++                target->CastCustomSpell(sSpellMgr->GetSpellTwinFor(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED, impAurEff->GetId()), SPELLVALUE_BASE_POINT0, impAurEff->GetAmount(), target, true, nullptr, aurEff);
+         }
+     }
+ 
+     void HandleEffectRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+     {
+         Unit* target = GetTarget();
+-        target->RemoveAura(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED);
+-        target->RemoveAura(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED);
+-        target->RemoveAura(SPELL_DK_FROST_PRESENCE_TRIGGERED);
+-        target->RemoveAura(SPELL_DK_FROST_PRESENCE_BONUS_EFFECTS);
+-        target->RemoveAura(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED);
++        target->RemoveAurasDueToSpellOrTwin(SPELL_DK_IMPROVED_BLOOD_PRESENCE_TRIGGERED);
++        target->RemoveAurasDueToSpellOrTwin(SPELL_DK_IMPROVED_UNHOLY_PRESENCE_TRIGGERED);
++        target->RemoveAurasDueToSpellOrTwin(SPELL_DK_FROST_PRESENCE_TRIGGERED);
++        target->RemoveAurasDueToSpellOrTwin(SPELL_DK_FROST_PRESENCE_BONUS_EFFECTS);
++        target->RemoveAurasDueToSpellOrTwin(SPELL_DK_UNHOLY_PRESENCE_TRIGGERED);
+     }
+ 
+     void Register() override
+@@ -2175,7 +2199,7 @@ class spell_dk_raise_dead : public SpellScript
+     uint32 GetGhoulSpellId()
+     {
+         // Do we have talent Master of Ghouls?
+-        if (GetCaster()->HasAura(SPELL_DK_MASTER_OF_GHOULS))
++        if (GetCaster()->HasAuraOrTwin(SPELL_DK_MASTER_OF_GHOULS)) // ShadowCore DK v2: identidade Unholy e a gemea
+             // summon as pet
+             return GetSpellInfo()->Effects[EFFECT_2].CalcValue();
+ 
+@@ -2800,16 +2824,20 @@ class spell_dk_sudden_doom : public AuraScript
+         PreventDefaultAction();
+ 
+         Unit* caster = eventInfo.GetActor();
+-        SpellInfo const* spellInfo = sSpellMgr->AssertSpellInfo(SPELL_DK_DEATH_COIL_R1);
+         uint32 spellId = 0;
+-
+-        while (spellInfo)
++        for (uint32 first : { uint32(SPELL_DK_DEATH_COIL_R1), DkReborn::PartFor(SPELL_DK_DEATH_COIL_R1, aurEff->GetId()) })
+         {
+-            if (!caster->HasSpell(spellInfo->Id))
+-                break;
++            SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(first);
++            while (spellInfo)
++            {
++                if (!caster->HasSpell(spellInfo->Id))
++                    break;
+ 
+-            spellId = spellInfo->Id;
+-            spellInfo = spellInfo->GetNextRankSpell();
++                spellId = spellInfo->Id;
++                spellInfo = spellInfo->GetNextRankSpell();
++            }
++            if (spellId)
++                break;
+         }
+ 
+         if (!spellId)
+-- 
+2.39.5
+

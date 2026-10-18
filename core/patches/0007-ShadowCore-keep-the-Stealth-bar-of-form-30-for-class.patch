@@ -1,0 +1,37 @@
+From 15b99f3b67eed25e867486c9d884b7b5d01c6a59 Mon Sep 17 00:00:00 2001
+From: CoA Reborn Classes contributors <noreply@example.invalid>
+Date: Sat, 17 Oct 2026 12:53:00 +0900
+Subject: [PATCH] ShadowCore: keep the Stealth bar of form 30 for classic
+ Rogues (option C)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/server/coa/AscensionCompat.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/server/coa/AscensionCompat.cpp b/src/server/coa/AscensionCompat.cpp
+index 24240a8c9..fbdc76f86 100644
+--- a/src/server/coa/AscensionCompat.cpp
++++ b/src/server/coa/AscensionCompat.cpp
+@@ -4130,7 +4130,18 @@ public:
+         bytes += SendSkillLineAbilityRow(player, row);
+ 
+     for (ShapeshiftFormPatchRow const &row : rows.ShapeshiftForms)
++    {
++      // ShadowCore (opcao C do Stealth): o SQL oficial zera a barra da forma 30 (Runeshroud); o Rogue classico
++      // continua recebendo a barra de Stealth (BonusActionBar 1). As outras classes recebem a linha oficial.
++      if (row.Values[0] == 30 && player->getClass() == CLASS_ROGUE)
++      {
++        ShapeshiftFormPatchRow rogueRow = row;
++        rogueRow.Values[1] = 1;
++        bytes += SendShapeshiftFormRow(player, rogueRow);
++        continue;
++      }
+       bytes += SendShapeshiftFormRow(player, row);
++    }
+ 
+     for (VanityCollectionPatchRow const& row : rows.VanityCollections)
+       bytes += SendVanityCollectionRow(player, row);
+-- 
+2.39.5
+

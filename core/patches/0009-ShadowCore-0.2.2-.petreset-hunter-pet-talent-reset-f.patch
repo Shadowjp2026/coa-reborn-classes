@@ -1,0 +1,133 @@
+From 61f6b7e1bb77d7941fbbe4a3ed2ed11a7393f656 Mon Sep 17 00:00:00 2001
+From: CoA Reborn Classes contributors <noreply@example.invalid>
+Date: Sat, 17 Oct 2026 19:50:50 +0900
+Subject: [PATCH] ShadowCore 0.2.2: .petreset (hunter pet talent reset for
+ gold, pet talent window sync)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/server/coa/CoAPetTalentReset.cpp | 91 ++++++++++++++++++++++++++++
+ src/server/coa/CoAScriptLoader.cpp   |  2 +
+ 2 files changed, 93 insertions(+)
+ create mode 100644 src/server/coa/CoAPetTalentReset.cpp
+
+diff --git a/src/server/coa/CoAPetTalentReset.cpp b/src/server/coa/CoAPetTalentReset.cpp
+new file mode 100644
+index 000000000..af722273a
+--- /dev/null
++++ b/src/server/coa/CoAPetTalentReset.cpp
+@@ -0,0 +1,91 @@
++/*
++ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license: https://github.com/azerothcore/azerothcore-wotlk/blob/master/LICENSE-AGPL3
++ */
++
++// ShadowCore: ".petreset" lets a hunter reset the active pet's talents for gold from the talent window
++// (the 3.3.5 client has no pet talent reset opcode; the trainer gossip stays free). Reuses Player::ResetPetTalents.
++
++#include "Chat.h"
++#include "ChatCommand.h"
++#include "CommandScript.h"
++#include "Config.h"
++#include "Log.h"
++#include "Pet.h"
++#include "Player.h"
++#include "WorldSession.h"
++
++using namespace Acore::ChatCommands;
++
++class coa_pet_talent_reset_commandscript : public CommandScript
++{
++public:
++    coa_pet_talent_reset_commandscript() : CommandScript("coa_pet_talent_reset_commandscript") { }
++
++    ChatCommandTable GetCommands() const override
++    {
++        static ChatCommandTable commandTable =
++        {
++            { "petreset", HandlePetReset, SEC_PLAYER, Console::No },
++        };
++        return commandTable;
++    }
++
++    static uint32 Cost()
++    {
++        return sConfigMgr->GetOption<uint32>("CoA.PetTalentReset.Cost", 50000);
++    }
++
++    static bool HandlePetReset(ChatHandler* handler, Optional<std::string> confirm)
++    {
++        Player* player = handler->GetPlayer();
++        if (!player)
++            return false;
++
++        // ".petreset sync": the talent window asks for the pet talent data again (the client drops it when the pet
++        // is summoned again); silent, free, no change on the server side.
++        if (confirm && *confirm == "sync")
++        {
++            if (player->GetPet())
++                player->SendTalentsInfoData(true);
++            return true;
++        }
++
++        Pet* pet = player->GetPet();
++        if (!pet || pet->getPetType() != HUNTER_PET)
++        {
++            handler->SendErrorMessage("You need your hunter pet out to reset its talents.");
++            return false;
++        }
++        if (pet->m_usedTalentCount == 0)
++        {
++            handler->SendErrorMessage("Your pet has no talents to reset.");
++            return false;
++        }
++
++        uint32 const cost = Cost();
++        if (!confirm || *confirm != "confirm")
++        {
++            handler->PSendSysMessage("Resetting {}'s talents costs {}g {}s {}c. Type .petreset confirm to proceed.",
++                pet->GetName(), cost / 10000, (cost / 100) % 100, cost % 100);
++            return true;
++        }
++        if (!player->HasEnoughMoney(cost))
++        {
++            handler->SendErrorMessage("You need {}g {}s {}c to reset your pet's talents.", cost / 10000, (cost / 100) % 100, cost % 100);
++            return false;
++        }
++
++        uint32 const used = pet->m_usedTalentCount;
++        player->ModifyMoney(-int32(cost));
++        player->ResetPetTalents();
++        LOG_INFO("module", "Pet talent reset: {} reset {} ({} points) for {} copper", player->GetName(), pet->GetName(), used, cost);
++        handler->PSendSysMessage("{}'s talents were reset ({} points refunded) for {}g {}s {}c.", pet->GetName(), used,
++            cost / 10000, (cost / 100) % 100, cost % 100);
++        return true;
++    }
++};
++
++void AddSC_CoAPetTalentReset()
++{
++    new coa_pet_talent_reset_commandscript();
++}
+diff --git a/src/server/coa/CoAScriptLoader.cpp b/src/server/coa/CoAScriptLoader.cpp
+index c0431bda0..67402871b 100644
+--- a/src/server/coa/CoAScriptLoader.cpp
++++ b/src/server/coa/CoAScriptLoader.cpp
+@@ -44,6 +44,7 @@ void AddSC_AscensionSupportPaladin(); // [SUPPORT-V2]
+ void AddSC_AscensionTalentDataProcs();
+ void AddSC_AscensionTreeOfLife();
+ void AddSC_CoALfgStartPoint();
++void AddSC_CoAPetTalentReset();
+ void AddSC_CoABossProbe();
+ void AddSC_CoADungeonSpellDamage();
+ void AddSC_CoACreatureScaling();
+@@ -707,6 +708,7 @@ void AddCoAScripts()
+     AddSC_AscensionTalentDataProcs();
+     AddSC_AscensionTreeOfLife();
+     AddSC_CoALfgStartPoint();
++    AddSC_CoAPetTalentReset();
+     AddSC_CoABossProbe();
+     AddSC_CoADungeonSpellDamage();
+     AddSC_CoACreatureScaling();
+-- 
+2.39.5
+

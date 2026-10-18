@@ -1,0 +1,113 @@
+From 637e49226ac2e811fc0ac4c14c324611c79ee2d7 Mon Sep 17 00:00:00 2001
+From: CoA Reborn Classes contributors <noreply@example.invalid>
+Date: Sat, 17 Oct 2026 19:31:30 +0900
+Subject: [PATCH] ShadowCore 0.2.1: enforce per-tab talent gates on build
+ uploads; one free talent reset per ShadowCore.TalentResetRevision
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/server/coa/AscensionCoATalentData.cpp |  5 +++
+ src/server/coa/AscensionCoATalentData.h   |  4 +++
+ src/server/coa/AscensionCompat.cpp        | 41 +++++++++++++++++++++++
+ 3 files changed, 50 insertions(+)
+
+diff --git a/src/server/coa/AscensionCoATalentData.cpp b/src/server/coa/AscensionCoATalentData.cpp
+index bd339966f..8d5fe64b9 100644
+--- a/src/server/coa/AscensionCoATalentData.cpp
++++ b/src/server/coa/AscensionCoATalentData.cpp
+@@ -41,6 +41,8 @@ enum AdvancementDwordField : uint32
+     ADVANCEMENT_AE_COST      = 14,
+     ADVANCEMENT_TE_COST      = 15,
+     ADVANCEMENT_LEVEL        = 26,
++    ADVANCEMENT_TAB_AE_GATE  = 38,
++    ADVANCEMENT_TAB_TE_GATE  = 39,
+     ADVANCEMENT_GROUP        = 29,
+     ADVANCEMENT_CLASS_TYPE   = 32,
+     ADVANCEMENT_TAB          = 33,
+@@ -253,6 +255,9 @@ bool LoadCoATalentData()
+         node.Entry.FreeUnlearn = (record.GetUInt32(ADVANCEMENT_FLAGS) & ADVANCEMENT_FLAG_FREE_UNLEARN) != 0;
+         node.Group = record.GetUInt32(ADVANCEMENT_GROUP);
+         node.ClassTab = tab == SHARED_CLASS_TAB_ID;
++        node.Entry.ClassTab = node.ClassTab;
++        node.Entry.TabGate = uint8(std::min<uint32>(record.GetUInt32(node.Entry.TECost ? ADVANCEMENT_TAB_TE_GATE
++            : ADVANCEMENT_TAB_AE_GATE), 255));
+ 
+         bool tooManyRanks = false;
+         for (uint32 field = ADVANCEMENT_SPELLS; field < ADVANCEMENT_SPELLS + ADVANCEMENT_RANK_COUNT; ++field)
+diff --git a/src/server/coa/AscensionCoATalentData.h b/src/server/coa/AscensionCoATalentData.h
+index a267700ce..a67be8e58 100644
+--- a/src/server/coa/AscensionCoATalentData.h
++++ b/src/server/coa/AscensionCoATalentData.h
+@@ -20,6 +20,10 @@ struct CoATalentEntry
+     bool Talent = false;
+     bool FreeUnlearn = false;
+     std::array<std::uint32_t, 3> RequiredEntryIds{};
++    // ShadowCore: points that must already be spent in this tab, on rows with a lower gate (CharacterAdvancement dword
++    // 38 for the shared class tab / ability essence, dword 39 for a specialization tab / talent essence).
++    std::uint8_t TabGate = 0;
++    bool ClassTab = false;
+ };
+ 
+ struct CoASelectableFreeEntry
+diff --git a/src/server/coa/AscensionCompat.cpp b/src/server/coa/AscensionCompat.cpp
+index fbdc76f86..4a76b4f22 100644
+--- a/src/server/coa/AscensionCompat.cpp
++++ b/src/server/coa/AscensionCompat.cpp
+@@ -1539,6 +1539,19 @@ public:
+       // Unified realms: the classic classes also synchronize at login, so the talent web's
+       // automatic entries and the Support skill line arrive without waiting for a save.
+       SynchronizeProgression(player);
++
++    // ShadowCore 0.2.1: one free talent reset per revision (ShadowCore.TalentResetRevision), for players whose tree
++    // timings changed. Only paid talent ranks go; level, items, money and currencies are untouched. Bots re-sync alone.
++    if (uint32 const revision = sConfigMgr->GetOption<uint32>("ShadowCore.TalentResetRevision", 0);
++        revision && !player->GetSession()->IsBot() &&
++        player->GetPlayerSetting("core.shadowcore_talent_reset", 0).value < revision)
++    {
++      uint32 const removed = ResetPaidTalents(player);
++      player->UpdatePlayerSetting("core.shadowcore_talent_reset", 0, revision);
++      if (removed)
++        ChatHandler(player->GetSession()).PSendSysMessage(
++            "Your talent trees were updated for level 80: your talent points were refunded for free. Open the talent window (N) to spend them again.");
++    }
+     QueueCharacterAdvancementState(player);
+ 
+     CharacterDatabasePreparedStatement* actionsStmt =
+@@ -2145,6 +2158,34 @@ public:
+       return false;
+     }
+ 
++    // ShadowCore 0.2.1: per-tab point gates, the rule the talent window shows and the free-pick engine enforces
++    // (AscensionFreepickRules TabAE/TabTE): a gated row needs that many points already spent in the same tab on rows
++    // with a lower gate, so taking points back out of the lower rows cannot leave a gated row standing.
++    for (AscensionCoATalentState::KnownEntry const& item : priced)
++    {
++      AscensionCompatData::CoATalentEntry const* entry = FindTalentEntry(item.EntryId);
++      if (!entry || !entry->TabGate || !item.Rank)
++        continue;
++      bool const classPoints = entry->AECost && !entry->TECost;
++      uint32 invested = 0;
++      for (AscensionCoATalentState::KnownEntry const& other : priced)
++      {
++        AscensionCompatData::CoATalentEntry const* lower = FindTalentEntry(other.EntryId);
++        if (!lower || lower->ClassTab != entry->ClassTab || lower->ClassId != entry->ClassId ||
++            (!entry->ClassTab && lower->SpecId != entry->SpecId) || lower->TabGate >= entry->TabGate)
++          continue;
++        invested += uint32(classPoints ? lower->AECost : lower->TECost) * other.Rank;
++      }
++      if (invested < entry->TabGate)
++      {
++        refusal = { "CA_UPDATE_ENTRIES_NOT_TRAVERSIBLE",
++                    classPoints ? "CA_LEARN_NOT_ENOUGH_INVESTED_AE" : "CA_LEARN_NOT_ENOUGH_INVESTED_TE", item.EntryId, item.Rank,
++                    Acore::StringFormat("Talent entry {} needs {} point(s) spent in its tab first; the build has {}.",
++                        item.EntryId, uint32(entry->TabGate), invested) };
++        return false;
++      }
++    }
++
+     std::vector<AscensionCompatData::CoATalentEntry const*> removed;
+     AscensionCoATalentState::RemovalPayment payment;
+     if (!requestedSpec)
+-- 
+2.39.5
+

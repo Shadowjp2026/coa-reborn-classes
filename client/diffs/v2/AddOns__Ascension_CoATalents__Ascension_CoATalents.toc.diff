@@ -1,0 +1,9 @@
+--- a/Interface/AddOns/Ascension_CoATalents/Ascension_CoATalents.toc
++++ b/Interface/AddOns/Ascension_CoATalents/Ascension_CoATalents.toc
+@@ -11,3 +11,6 @@
+ 
+ Templates\CoATalentTemplates.xml
+ CoATalentFrame.xml
++
++# ShadowCore: Hunter pet talent tree inside the CoA talent window
++ShadowCore\PetTalents.xml

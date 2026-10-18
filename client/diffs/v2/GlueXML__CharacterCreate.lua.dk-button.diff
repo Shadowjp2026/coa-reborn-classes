@@ -1,0 +1,12 @@
+--- CharacterCreate.lua.zzs	2026-10-17 12:08:42.571112551 +0900
++++ CharacterCreate.lua	2026-10-17 12:09:07.611396317 +0900
+@@ -3115,7 +3115,8 @@
+ 		local layoutIndex = 0
+ 		for i = 1, 11 do
+ 			local classID = Enum.Class[CLASSIC_CLASS_ORDER[i]]
+-			if classID and classID ~= 6 and classID ~= 10 and C_CharacterCreate.CanCreateClass(classID) then
++			-- DK v2 (17/10, TESTE): o Death Knight entra na terceira fileira (nivel 1, zona inicial da raca); so o HERO (10) fica de fora
++			if classID and classID ~= 10 and C_CharacterCreate.CanCreateClass(classID) then
+ 				local className, classFile, enabled = GetClassInfo(classID)
+ 				if className and classFile then
+ 					layoutIndex = layoutIndex + 1

@@ -1,0 +1,20 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <Script file="PetTalents.lua"/>
+
+    <!-- No do pet: o mesmo botao quadrado/redondo das arvores CoA, com um mixin que troca as chamadas da CA pela API de talento de pet do 3.3.5 -->
+    <Button name="ShadowPetTalentButtonSquareTemplate" inherits="CoATalentButtonSquareTemplate" virtual="true">
+        <Scripts>
+            <OnLoad>
+                MixinAndLoadScripts(self, "ShadowPetTalentButtonSquareMixin")
+            </OnLoad>
+        </Scripts>
+    </Button>
+
+    <Button name="ShadowPetTalentButtonCircleTemplate" inherits="CoATalentButtonCircleTemplate" virtual="true">
+        <Scripts>
+            <OnLoad>
+                MixinAndLoadScripts(self, "ShadowPetTalentButtonCircleMixin")
+            </OnLoad>
+        </Scripts>
+    </Button>
+</Ui>
